@@ -1,0 +1,22 @@
+import socket
+from hands import HandThread
+import time
+import struct
+
+thread = HandThread()
+thread.start()
+
+# Set up a UDP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+# Define the address and port of the recipient
+host = '127.0.0.1'
+port = 5066
+address = (host, port)
+data=thread.data.encode('utf-8')
+
+# Send the data
+sock.sendto(data, address)
+
+# Close the socket
+sock.close()
