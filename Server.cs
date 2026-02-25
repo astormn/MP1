@@ -1,4 +1,5 @@
 //using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -201,15 +202,20 @@ public class UdpServer : MonoBehaviour
                     string[] lines = str.Split('\n'); // splits them by line so you just get e.g. 'Right|8|0.0698|-0.0152|0.0074'
                     foreach (string l in lines)
                     {
+                        if (string.IsNullOrWhiteSpace(l)) continue;
                         string[] s = l.Split('|');          // splits by the straight sl
                         if (s.Length < 5) continue;
                         int i;
-                        if (s[0] == "Left") h = left;
-                        else if (s[0] == "Right") h = right;
+                        if (s[0].Trim() == "Left") h = left;
+                        else if (s[0].Trim() == "Right") h = right;
+                        else continue;
                         if (!int.TryParse(s[1], out i)) continue;
+                        if (i < 0 || i >= LANDMARK_COUNT) continue;
+
+                        if (h==null) continue;
 
                         //again if shitting itself occurs you need to lock h for these two lines
-                        h.positionsBuffer[i] += new Vector3(float.Parse(s[2]), float.Parse(s[3]), float.Parse(s[4]));
+                        h.positionsBuffer[i] += new Vector3(float.Parse(s[2]), -float.Parse(s[3]), float.Parse(s[4]));
                         h.samplesCounter += 1f / LANDMARK_COUNT;
                     }
             }
