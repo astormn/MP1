@@ -1,0 +1,135 @@
+# MediaPipe Hands
+import mediapipe as mp
+import cv2
+import struct
+import numpy as np
+import threading
+import time
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.core.base_options import BaseOptions
+from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, RunningMode
+
+DEBUG = False # significantly reduces performance
+MODEL_COMPLEXITY = 0 # set to 1 to improve accuracy at the cost of performance
+
+# the capture thread captures images from the WebCam on a separate thread (for performance)
+class CaptureThread(threading.Thread):
+    cap = None
+    ret = None
+    frame = None
+    isRunning = False
+    counter = 0
+    timer = 0.0
+    def run(self):
+        self.cap = cv2.VideoCapture(0) # sometimes it can take a while for certain video captures
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+
+        print("Opened Capture")
+        while(True):
+            self.ret, self.frame = self.cap.read()
+            self.isRunning = True
+            if DEBUG:
+                self.counter = self.counter+1
+                if time.time()-self.timer>=3:
+                    print("Capture FPS: ",self.counter/(time.time()-self.timer))
+                    self.counter = 0
+                    self.timer = time.time()
+
+# the hand thread actually does the processing of the captured images
+class HandThread(threading.Thread):
+    #data is bytes
+    data = b""
+    dirty = True
+
+    def run(self):
+        model_path = "/Users/student/PycharmProjects/HandTracking/hand_landmarker.task"
+
+        capture = CaptureThread()
+        capture.start()
+
+        self.latest_result = None
+
+        #latest_result = None
+
+        def result_callback(result, output_imgae, timestamp_ms):
+            #global latest_result
+            self.latest_result = result
+
+        BaseOptions = python.BaseOptions
+        HandLandmarker = vision.HandLandmarker
+        HandLandmarkerOptions = vision.HandLandmarkerOptions
+        VisionRunningMode = vision.RunningMode
+
+        options = HandLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=model_path),
+            running_mode=VisionRunningMode.LIVE_STREAM,
+            num_hands=2,
+            result_callback=result_callback
+        )
+        #landmarker = HandLandmarker.create_from_options(options)
+
+        with HandLandmarker.create_from_options(options) as landmarker:
+            while capture.isRunning==False:
+                print("Waiting for capture")
+                time.sleep(0.5)
+            print("beginning capture")
+                
+            while capture.cap.isOpened():
+                #ret, frame = cap.read()
+                ret = capture.ret
+                frame = capture.frame
+                if not ret:
+                        continue
+
+                frame = cv2.flip(frame, 1)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                mp_image = mp.Image(
+                    image_format=mp.ImageFormat.SRGB,
+                    data=rgb_frame
+                )
+
+                timestamp = int(time.time() * 1000)
+               #latest_result = landmarker.detect_async(mp_image, timestamp)
+                landmarker.detect_async(mp_image, timestamp)
+                h, w, _ = frame.shape
+                image = frame.copy()
+                #self.data = ""
+                packet = bytearray()
+
+                if self.latest_result is not None:
+
+                    result = self.latest_result
+                    self.latest_result = None  # consume it
+
+                    if result.hand_world_landmarks:
+
+                        for j in range(len(result.handedness)):
+                            label = result.handedness[j][0].category_name
+                            world_landmarks = result.hand_world_landmarks[j]
+
+                            hand_id = 0 if label == "Left" else 1
+                            packet.extend(struct.pack("B", hand_id))
+
+                            for i in range(21):
+                                packet.extend(struct.pack(
+                                    "fff",
+                                    world_landmarks[i].x,
+                                    world_landmarks[i].y,
+                                    world_landmarks[i].z
+                                ))
+
+                        self.data = packet
+                        self.dirty = True
+
+                if DEBUG:
+                    cv2.imshow("Hand Tracking", image)
+                    if cv2.waitKey(5) & 0xFF == ord("q"):
+                        break
+
+
+        capture.cap.release()
+        cv2.destroyAllWindows()
