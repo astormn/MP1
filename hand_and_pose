@@ -1,0 +1,158 @@
+import cv2
+import mediapipe as mp
+import time
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.core.base_options import BaseOptions
+from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, PoseLandmarker, PoseLandmarkerOptions, RunningMode
+
+# Models
+hand_model_path = "/Users/student/PycharmProjects/HandTracking/hand_landmarker.task"
+pose_model_path = "/Users/student/PycharmProjects/HandTracking/pose_landmarker_full.task"
+
+BaseOptions = python.BaseOptions
+VisionRunningMode = vision.RunningMode
+
+# HandLandmarker
+hand_options = HandLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=hand_model_path),
+    running_mode=VisionRunningMode.VIDEO,
+    num_hands=2
+)
+hand_landmarker = HandLandmarker.create_from_options(hand_options)
+
+# PoseLandmarker
+pose_options = PoseLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=pose_model_path),
+    running_mode=VisionRunningMode.VIDEO
+)
+pose_landmarker = PoseLandmarker.create_from_options(pose_options)
+
+HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),
+    (0,5),(5,6),(6,7),(7,8),
+    (5,9),(9,10),(10,11),(11,12),
+    (9,13),(13,14),(14,15),(15,16),
+    (13,17),(17,18),(18,19),(19,20),
+    (0,17)
+]
+
+# Open webcam
+webcam = cv2.VideoCapture(0)
+prev_time = 0
+
+while webcam.isOpened():
+    success, frame = webcam.read()
+    if not success:
+        break
+
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+    timestamp = int(time.time() * 1000)
+
+    # Detect hands
+    hand_result = hand_landmarker.detect_for_video(mp_image, timestamp)
+    # Detect pose
+    pose_result = pose_landmarker.detect_for_video(mp_image, timestamp)
+
+
+    h, w, _ = frame.shape
+
+    hand_wrist_points = []
+    left_wrist= None
+    right_wrist = None
+
+    # --- Draw hands ---
+    if hand_result.hand_landmarks:
+        for hand_landmarks, handedness in zip(
+                hand_result.hand_landmarks,
+                hand_result.handedness):
+
+            wrist=hand_landmarks[0]
+            x = int(wrist.x * w)
+            y = int(wrist.y *h)
+            label = handedness[0].category_name  # "Left" or "Right"
+
+            if label == "Left":
+                left_wrist = (x, y)
+                cv2.circle(frame, left_wrist, 10, (255, 255, 0), -1)
+
+            elif label == "Right":
+                right_wrist = (x, y)
+                cv2.circle(frame, right_wrist, 10, (255, 255, 0), -1)
+        for hand_landmarks in hand_result.hand_landmarks:
+            for lm in hand_landmarks:
+                x = int(lm.x * w)
+                y = int(lm.y * h)
+                cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+            for start, end in HAND_CONNECTIONS:
+                x0 = int(hand_landmarks[start].x * w)
+                y0 = int(hand_landmarks[start].y * h)
+                x1 = int(hand_landmarks[end].x * w)
+                y1 = int(hand_landmarks[end].y * h)
+                cv2.line(frame, (x0, y0), (x1, y1), (255, 0, 0), 2)
+
+    # --- Draw elbows and shoulders using NORMALIZED coordinates ---
+    if pose_result.pose_landmarks:
+
+        pose_landmarks = pose_result.pose_landmarks[0]  # first detected person
+
+        indices = {
+            "L_Shoulder": 11,
+            "R_Shoulder": 12,
+            "L_Elbow": 13,
+            "R_Elbow": 14,
+        }
+
+        pose_points = {}
+
+        for name, idx in indices.items():
+            if idx < len(pose_landmarks):
+                lm = pose_landmarks[idx]
+
+                # Use normalized image coordinates directly
+                x = int(lm.x * w)
+                y = int(lm.y * h)
+
+                pose_points[name] = (x, y)
+                #
+                # #  ignore low-visibility landmarks
+                # if lm.visibility > 0.5:
+                #     color = (0, 0, 255) if "Shoulder" in name else (0, 255, 255)
+                #     cv2.circle(frame, (x, y), 8, color, -1)
+
+        # Draw connections if both points exist
+        if "L_Shoulder" in pose_points and "L_Elbow" in pose_points:
+            cv2.line(frame, pose_points["L_Shoulder"], pose_points["L_Elbow"], (0, 255, 255), 2)
+
+        if "R_Shoulder" in pose_points and "R_Elbow" in pose_points:
+            cv2.line(frame, pose_points["R_Shoulder"], pose_points["R_Elbow"], (0, 255, 255), 2)
+
+        if "L_Shoulder" in pose_points and "R_Shoulder" in pose_points:
+            cv2.line(frame, pose_points["L_Shoulder"], pose_points["R_Shoulder"], (255, 0, 255), 2)
+
+        if "L_Elbow" in pose_points and left_wrist is not None:
+            cv2.line(frame,
+                     pose_points["L_Elbow"],
+                     left_wrist,
+                     (0, 255, 0), 3)
+
+        if "R_Elbow" in pose_points and right_wrist is not None:
+            cv2.line(frame,
+                     pose_points["R_Elbow"],
+                     right_wrist,
+                     (0, 255, 0), 3)
+
+    # --- FPS ---
+    current_time = time.time()
+    fps = 1 / (current_time - prev_time) if prev_time != 0 else 0
+    prev_time = current_time
+    cv2.putText(frame, f"FPS: {int(fps)}", (10,40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
+
+    cv2.imshow("Hand + Pose", frame)
+    if cv2.waitKey(5) & 0xFF == ord("q"):
+        break
+
+webcam.release()
+cv2.destroyAllWindows()
