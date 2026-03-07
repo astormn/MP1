@@ -59,8 +59,9 @@ public class UdpServer : MonoBehaviour
         Pinky2 = 18,
         Pinky3 = 19,
         Pinky4 = 20, 
-        Elbow = 21, 
+        Elbow =21, 
         Shoulder = 22
+  
     }
 
     public class Hand
@@ -137,14 +138,15 @@ public class UdpServer : MonoBehaviour
             lines[4].SetPosition(3, instances[(int)Landmark.Pinky3].transform.position);
             lines[4].SetPosition(4, instances[(int)Landmark.Pinky4].transform.position);
 
-            // Arm line: wrist -> elbow -> shoulder
+            // Arm: Wrist -> Elbow -> Shoulder
             lines[5].positionCount = 3;
+            lines[5].SetPositions(new Vector3[] {
+                instances[(int)Landmark.Wrist].transform.position,
+                instances[(int)Landmark.Elbow].transform.position,
+                instances[(int)Landmark.Shoulder].transform.position
+            });
 
-            lines[5].SetPosition(0, instances[(int)Landmark.Wrist].transform.position);
-            lines[5].SetPosition(1, instances[(int)Landmark.Elbow].transform.position);
-            lines[5].SetPosition(2, instances[(int)Landmark.Shoulder].transform.position);
         }
-
         public float GetFingerAngle(Landmark referenceFrom, Landmark referenceTo, Landmark from, Landmark to)
         {
             Vector3 reference = (instances[(int)referenceTo].transform.position - instances[(int)referenceFrom].transform.position).normalized;
@@ -220,7 +222,7 @@ private void Update()
             for (int i = 0; i < LANDMARK_COUNT; ++i)
             {   
                 //test 2
-                //h.instances[i].transform.localPosition = h.readBuffer[i];
+                h.instances[i].transform.localPosition = h.readBuffer[i];
 
                 //test 1
                 //h.instances[i].transform.localPosition = h.positionsBuffer[i] / (float)h.samplesCounter * multiplier;
@@ -237,18 +239,17 @@ private void Update()
                 //     );
 
                 //test 4 
+                    //h.readBuffer[i] = h.writeBuffer[i]; 
 
-                //h.instances[i].transform.localPosition = h.readBuffer[i];
+                //test 5 THIS WORKS FOR HANDS
+                // float smoothing = 0.3f; 
 
-                //test 5
-                float smoothing = 0.3f; // try 15–30
-
-                h.instances[i].transform.localPosition =
-                    Vector3.Lerp(
-                        h.instances[i].transform.localPosition,
-                        h.readBuffer[i],
-                        smoothing
-                    );
+                // h.instances[i].transform.localPosition =
+                //     Vector3.Lerp(
+                //         h.instances[i].transform.localPosition,
+                //         h.readBuffer[i],
+                //         smoothing
+                //     );
             }
 
             //h.reportedSamplesPerSecond = h.samplesCounter / (Time.timeSinceLevelLoad - h.lastSampleTime);
@@ -282,38 +283,33 @@ private void Update()
 
                 Hand h = (handId == 0) ? left : right;
 
-                    Vector3 wristRaw = Vector3.zero;
 
-                    Vector3[] raw = new Vector3[LANDMARK_COUNT];
+                    // WORKING AS OF 6:54 
+                    // for (int i = 0; i < LANDMARK_COUNT; i++)
+                    // {
+                    //     float x = BitConverter.ToSingle(data, offset); offset += 4;
+                    //     float y = BitConverter.ToSingle(data, offset); offset += 4;
+                    //     float z = BitConverter.ToSingle(data, offset); offset += 4;
+                    //     h.writeBuffer[i] = new Vector3(x,-y,z) * multiplier;
+                    //     //Vector3 pos = new Vector3(x, -y, z);
 
+
+                    // }
+
+                    //attempt 1 million and 1
                     for (int i = 0; i < LANDMARK_COUNT; i++)
                     {
                         float x = BitConverter.ToSingle(data, offset); offset += 4;
                         float y = BitConverter.ToSingle(data, offset); offset += 4;
                         float z = BitConverter.ToSingle(data, offset); offset += 4;
 
-                        Vector3 pos = new Vector3(x, -y, z);
-
-                        raw[i] = pos;
-
-                        if (i == 0)
-                            wristRaw = pos;
+                        // Just multiply by a fixed multiplier to scale world units to Unity
+                        h.writeBuffer[i] = new Vector3(x, -y, z) * multiplier;
                     }
+  
+                    
 
-                    Vector3 wristScaled = wristRaw * multiplier;
 
-                    for (int i = 0; i < LANDMARK_COUNT; i++)
-                    {
-                        if (i <= 20) // hand landmarks
-                        {
-                            Vector3 relative = raw[i] - wristRaw;
-                            h.writeBuffer[i] = wristScaled + relative * multiplier;
-                        }
-                        else // elbow + shoulder are world coordinates
-                        {
-                            h.writeBuffer[i] = raw[i] * multiplier;
-                        }
-                    }
 
                     //// DEBUG: print received frame
                     // StringBuilder sb = new StringBuilder();
@@ -369,3 +365,4 @@ private void Update()
 
     }
 }
+
