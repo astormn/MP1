@@ -13,9 +13,11 @@ Reads the UDP server that unity sets up and then sets up a UDP socket to send th
 Server: 
 Unity code that sets up a UDP server, waits for the data from python then plots the positions of the hand landmarks in 3D space
 
-
 hands:
 threaded hand tracking data that captures images and on another thread processes the detection result to be sent over the UDP server 
+
+hands_and_pose: 
+similar to above but also caputes the elbow and shoulder landmark and formats it to be sent to unity
 
 hand_and_pose: 
 tracking the hands and eblows and shoulders. The wrists are from the hand tracking as I found they were more stable than the pose wrist landmark. 
