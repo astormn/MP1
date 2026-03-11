@@ -1,0 +1,154 @@
+# MediaPipe Hand + Pose using Tasks API
+import mediapipe as mp
+import cv2
+import struct
+import threading
+import time
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.core.base_options import BaseOptions
+from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions, PoseLandmarker, PoseLandmarkerOptions, RunningMode
+
+DEBUG = False
+
+class CaptureThread(threading.Thread):
+    cap = None
+    ret = None
+    frame = None
+    isRunning = False
+
+    def run(self):
+        self.cap = cv2.VideoCapture(0)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+        print("Opened Capture")
+        while True:
+            self.ret, self.frame = self.cap.read()
+            self.isRunning = True
+
+
+class HandAndPoseThread(threading.Thread):
+    data = b""
+    dirty = True
+
+    def run(self):
+        hand_model_path = "/Users/student/PycharmProjects/HandTracking/hand_landmarker.task"
+        pose_model_path = "/Users/student/PycharmProjects/HandTracking/pose_landmarker_full.task"
+
+        capture = CaptureThread()
+        capture.start()
+
+        self.latest_hand_result = None
+        self.latest_pose_result = None
+
+        def hand_callback(result, output_image, timestamp_ms):
+            self.latest_hand_result = result
+
+        def pose_callback(result, output_image, timestamp_ms):
+            self.latest_pose_result = result
+
+        hand_options = HandLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=hand_model_path),
+            running_mode=RunningMode.LIVE_STREAM,
+            num_hands=2,
+            result_callback=hand_callback
+        )
+
+        pose_options = PoseLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=pose_model_path),
+            running_mode=RunningMode.LIVE_STREAM,
+            result_callback=pose_callback
+        )
+
+        with HandLandmarker.create_from_options(hand_options) as hand_landmarker, \
+             PoseLandmarker.create_from_options(pose_options) as pose_landmarker:
+
+            while not capture.isRunning:
+                print("Waiting for capture")
+                time.sleep(0.5)
+            print("Beginning capture")
+
+            timestamp = 0
+
+            while capture.cap.isOpened():
+                ret = capture.ret
+                frame = capture.frame
+                if not ret:
+                    continue
+
+                frame = cv2.flip(frame, 1)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+
+                timestamp += 1
+                hand_landmarker.detect_async(mp_image, timestamp)
+                pose_landmarker.detect_async(mp_image, timestamp)
+
+                # Prepare uniform packet: 2 hands × (21 hand + elbow + shoulder)
+                packet = bytearray()
+                hands_data = {0: [None]*23, 1: [None]*23}  # Left=0, Right=1
+
+                # Extract pose landmarks (Task API returns a list of landmarks)
+                if self.latest_pose_result and self.latest_pose_result.pose_world_landmarks:
+                    landmarks = self.latest_pose_result.pose_world_landmarks
+                    #print(landmarks)
+
+                    # Use landmarks indices based on BlazePose standard (Task API)
+                    # LEFT_SHOULDER=11, RIGHT_SHOULDER=12, LEFT_ELBOW=13, RIGHT_ELBOW=14
+
+                    left_shoulder = landmarks[0][11] if landmarks[0][11].visibility > 0.5 else None
+                    right_shoulder = landmarks[0][12] if landmarks[0][12].visibility > 0.5  else None
+                    left_elbow = landmarks[0][13] if landmarks[0][13].visibility > 0.5  else None
+                    right_elbow = landmarks[0][14] if landmarks[0][14].visibility > 0.5  else None
+                else:
+                    left_shoulder = right_shoulder = left_elbow = right_elbow = None
+
+                # Extract hand landmarks
+                if self.latest_hand_result:
+                    for j, label_info in enumerate(self.latest_hand_result.handedness):
+                        label = label_info[0].category_name
+                        hand_id = 0 if label == "Left" else 1
+                        world_landmarks = self.latest_hand_result.hand_world_landmarks[j]
+                        print(world_landmarks)
+                        if left_shoulder is not None and right_shoulder is not None and left_elbow is not None and right_elbow is not None:
+                            print("detecting")
+                            
+                    
+
+                        # 21 hand landmarks
+                        for i in range(21):
+
+                            hands_data[hand_id][i] = world_landmarks[i]
+
+
+                        # Append elbow & shoulder
+                        if hand_id == 0:
+                            hands_data[hand_id][21] = left_elbow
+                            hands_data[hand_id][22] = left_shoulder
+                        else:
+                            hands_data[hand_id][21] = right_elbow
+                            hands_data[hand_id][22] = right_shoulder
+
+                    self.latest_hand_result = None
+
+                # Write fixed packet: Left then Right
+                for hand_id in [0,1]:
+                    packet.extend(struct.pack("B", hand_id))
+                    for landmark in hands_data[hand_id]:
+                        if landmark:
+                            packet.extend(struct.pack("fff", landmark.x, landmark.y, landmark.z))
+                        else:
+                            packet.extend(struct.pack("fff", 0.0, 0.0, 0.0))
+
+                self.data = packet
+                self.dirty = True
+                #print(hands_data)
+
+                if DEBUG:
+                    cv2.imshow("Hand + Pose Tracking", frame)
+                    if cv2.waitKey(5) & 0xFF == ord("q"):
+                        break
+
+
+
+        capture.cap.release()
+        cv2.destroyAllWindows()
