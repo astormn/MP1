@@ -99,8 +99,12 @@ class HandAndPoseThread(threading.Thread):
                     right_shoulder = landmarks[0][12] if landmarks[0][12].visibility > 0.5  else None
                     left_elbow = landmarks[0][13] if landmarks[0][13].visibility > 0.5  else None
                     right_elbow = landmarks[0][14] if landmarks[0][14].visibility > 0.5  else None
+                    pose_left_wrist = landmarks[0][15] if landmarks[0][15].visibility > 0.5 else None
+                    pose_right_wrist = landmarks[0][16] if landmarks[0][16].visibility > 0.5 else None
+
                 else:
                     left_shoulder = right_shoulder = left_elbow = right_elbow = None
+                    pose_left_wrist = pose_right_wrist = None
 
                 # Extract hand landmarks
                 if self.latest_hand_result:
@@ -109,24 +113,42 @@ class HandAndPoseThread(threading.Thread):
                         hand_id = 0 if label == "Left" else 1
                         world_landmarks = self.latest_hand_result.hand_world_landmarks[j]
                         print(world_landmarks)
+
+                        hand_wrist = world_landmarks[0]
+                        pose_wrist = pose_left_wrist if hand_id == 0 else pose_right_wrist
+
                         if left_shoulder is not None and right_shoulder is not None and left_elbow is not None and right_elbow is not None:
                             print("detecting")
-                            
-                    
 
-                        # 21 hand landmarks
                         for i in range(21):
+                            rel_x = world_landmarks[i].x - hand_wrist.x
+                            rel_y = world_landmarks[i].y - hand_wrist.y
+                            rel_z = world_landmarks[i].z - hand_wrist.z
 
-                            hands_data[hand_id][i] = world_landmarks[i]
+                            if pose_wrist:
+                                fused_x = pose_wrist.x + rel_x
+                                fused_y = pose_wrist.y + rel_y
+                                fused_z = pose_wrist.z + rel_z
+                            else:
+                                fused_x = fused_y = fused_z = 0.0
+
+                            hands_data[hand_id][i] = (fused_x, fused_y, fused_z)
+
+
+
 
 
                         # Append elbow & shoulder
                         if hand_id == 0:
-                            hands_data[hand_id][21] = left_elbow
-                            hands_data[hand_id][22] = left_shoulder
+                            hands_data[hand_id][21] = (left_elbow.x, left_elbow.y, left_elbow.z) if left_elbow else (
+                            0.0, 0.0, 0.0)
+                            hands_data[hand_id][22] = (
+                            left_shoulder.x, left_shoulder.y, left_shoulder.z) if left_shoulder else (0.0, 0.0, 0.0)
                         else:
-                            hands_data[hand_id][21] = right_elbow
-                            hands_data[hand_id][22] = right_shoulder
+                            hands_data[hand_id][21] = (
+                            right_elbow.x, right_elbow.y, right_elbow.z) if right_elbow else (0.0, 0.0, 0.0)
+                            hands_data[hand_id][22] = (
+                            right_shoulder.x, right_shoulder.y, right_shoulder.z) if right_shoulder else (0.0, 0.0, 0.0)
 
                     self.latest_hand_result = None
 
@@ -135,7 +157,8 @@ class HandAndPoseThread(threading.Thread):
                     packet.extend(struct.pack("B", hand_id))
                     for landmark in hands_data[hand_id]:
                         if landmark:
-                            packet.extend(struct.pack("fff", landmark.x, landmark.y, landmark.z))
+                            #packet.extend(struct.pack("fff", landmark.x, landmark.y, landmark.z))
+                            packet.extend(struct.pack("fff", landmark[0], landmark[1], landmark[2]))
                         else:
                             packet.extend(struct.pack("fff", 0.0, 0.0, 0.0))
 
