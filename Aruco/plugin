@@ -1,73 +1,100 @@
-
-
 #include <opencv2/opencv.hpp>
 #include <opencv2/aruco.hpp>
 #include <vector>
+#include <fstream>
+#include <iostream>
+#include <string>
 
-// Global storage for marker info
 std::vector<int> markerIds;
 std::vector<cv::Point2f> markerCenters;
 
-// Macro to export functions for macOS dylib
-#define DLL_EXPORT __attribute__((visibility("default")))
+#define PLUGIN_VERSION 1
 
-extern "C" {
-
-DLL_EXPORT void ProcessImage(unsigned char* data, int width, int height)
+extern "C"
 {
-    if (!data || width <= 0 || height <= 0)
-        return;
+    __attribute__((visibility("default")))
+    int GetPluginVersion()
+    {
+        return PLUGIN_VERSION;
+    }
+    void ProcessImage(unsigned char* data, int width, int height)
+    {
+        static int frameCount = 0;
+        std::cout << "[Plugin] ProcessImage called for frame " << frameCount++ << "\n";
 
-    cv::Mat img(height, width, CV_8UC4, data);
+        if (!data || width <= 0 || height <= 0)
+            return;
 
-    // Convert RGBA → BGR for OpenCV
-    cv::Mat bgr;
-    cv::cvtColor(img, bgr, cv::COLOR_RGBA2BGR);
+        // Step 1: Wrap raw data into OpenCV Mat
+        cv::Mat img(height, width, CV_8UC4, data);
 
-    // Get ArUco dictionary correctly
-    cv::Ptr<cv::aruco::Dictionary> dictionary =
+        // Step 2: Convert to BGR for OpenCV
+        cv::Mat bgr;
+        // Try BGRA first (most macOS webcams produce BGRA)
+        cv::cvtColor(img, bgr, cv::COLOR_BGRA2BGR);
+
+        // Step 3: Flip horizontally to correct mirrored webcam
+        cv::flip(bgr, bgr, 1);
+
+        // Optional: save debug frame to check orientation/colors
+        std::string filename = "/tmp/frame_" + std::to_string(frameCount++) + ".png";
+        //std::string filename = "/Users/student/Desktop/frame" + std::to_string(frameCount++) + ".png";
+        cv::imwrite(filename, bgr);
+
+        // Step 4: Prepare ArUco dictionary
+        cv::Ptr<cv::aruco::Dictionary> dictionary =
         cv::makePtr<cv::aruco::Dictionary>(
             cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50)
         );
 
-    std::vector<int> ids;
-    std::vector<std::vector<cv::Point2f>> corners;
+        std::vector<int> ids;
+        std::vector<std::vector<cv::Point2f>> corners;
 
-    // Detect markers
-    cv::aruco::detectMarkers(bgr, dictionary, corners, ids);
+        // Step 5: Detect markers
+        cv::aruco::detectMarkers(bgr, dictionary, corners, ids);
 
-    // Save marker info
-    markerIds = ids;
-    markerCenters.clear();
-    for (auto& corner : corners)
-    {
-        cv::Point2f center(0,0);
-        for (auto& p : corner) center += p;
-        center *= 0.25f; // average to get center
-        markerCenters.push_back(center);
+        // Step 6: Draw detected markers (optional, useful for debugging)
+        if (!ids.empty())
+        {
+            cv::aruco::drawDetectedMarkers(bgr, corners, ids);
+        }
+
+        // Step 7: Store IDs and center points
+        markerIds = ids;
+        markerCenters.clear();
+        for (auto& corner : corners)
+        {
+            cv::Point2f center(0, 0);
+            for (auto& p : corner)
+                center += p;
+            center *= 0.25f; // average to get center
+            markerCenters.push_back(center);
+        }
+
+        // Step 8: Log detected markers to file for debugging
+        std::ofstream out("/tmp/markers.txt", std::ios::app);
+        out << "Detected " << ids.size() << " markers in frame " << frameCount-1 << "\n";
+        for (auto id : ids)
+            out << "Marker ID: " << id << "\n";
+        out.close();
+
+        // Step 9: Convert back to RGBA for Unity
+        cv::cvtColor(bgr, img, cv::COLOR_BGR2RGBA);
     }
 
-    // Draw markers for debugging/texture
-    if (!ids.empty())
-        cv::aruco::drawDetectedMarkers(bgr, corners, ids);
+    int GetMarkerCount()
+    {
+        return markerIds.size();
+    }
 
-    // Convert back to RGBA for Unity
-    cv::cvtColor(bgr, img, cv::COLOR_BGR2RGBA);
+    void GetMarker(int index, int* id, float* x, float* y)
+    {
+        if (index < 0 || index >= markerIds.size())
+            return;
+
+        *id = markerIds[index];
+        *x = markerCenters[index].x;
+        *y = markerCenters[index].y;
+    }
 }
 
-DLL_EXPORT int GetMarkerCount()
-{
-    return static_cast<int>(markerIds.size());
-}
-
-DLL_EXPORT void GetMarker(int index, int* id, float* x, float* y)
-{
-    if (!id || !x || !y) return;
-    if (index < 0 || index >= markerIds.size()) return;
-
-    *id = markerIds[index];
-    *x = markerCenters[index].x;
-    *y = markerCenters[index].y;
-}
-
-} 
