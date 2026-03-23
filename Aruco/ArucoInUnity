@@ -1,9 +1,13 @@
 using UnityEngine;
 using System;
 using System.Runtime.InteropServices;
+//using System.Diagnostics;
 
-public class CameraFeedSafePersistent : MonoBehaviour
+public class CameraFeedDebugMarkers : MonoBehaviour
 {
+    [DllImport("opencvplugin")]
+    private static extern int GetPluginVersion();
+
     [DllImport("opencvplugin")]
     private static extern void ProcessImage(IntPtr data, int width, int height);
 
@@ -23,91 +27,87 @@ public class CameraFeedSafePersistent : MonoBehaviour
     {
         webcam = new WebCamTexture(640, 480);
         webcam.Play();
-    }
+        Debug.Log("Plugin version: " + GetPluginVersion());
 
-    public GameObject markerPrefab;
+    }
 
     void Update()
     {
-        int count = GetMarkerCount();
+        // Wait until webcam is fully initialized
+        if (webcam.width <= 16 || webcam.height <= 16)
+            return;
 
+        // Initialize only once after webcam is ready
+        if (!initialized)
+        {
+            texture = new Texture2D(webcam.width, webcam.height, TextureFormat.RGBA32, false);
+            pluginBuffer = new byte[webcam.width * webcam.height * 4];
+            handle = GCHandle.Alloc(pluginBuffer, GCHandleType.Pinned);
+
+            // Assign texture to quad
+            Renderer renderer = GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.material.mainTexture = texture;
+
+            float aspect = (float)webcam.width / webcam.height;
+            renderer.transform.localScale = new Vector3(aspect, 1, 1);   
+
+            initialized = true;
+        }
+
+        // Copy webcam pixels to buffer
+        Color32[] pixels = webcam.GetPixels32();
+        if (pixels.Length != webcam.width * webcam.height)
+            return; // extra safety check
+
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int idx = i * 4;
+            pluginBuffer[idx] = pixels[i].r;
+            pluginBuffer[idx + 1] = pixels[i].g;
+            pluginBuffer[idx + 2] = pixels[i].b;
+            pluginBuffer[idx + 3] = pixels[i].a;
+        }
+
+        // Call plugin
+        ProcessImage(handle.AddrOfPinnedObject(), texture.width, texture.height);
+
+        // Copy back to Texture2D
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int idx = i * 4;
+            pixels[i] = new Color32(
+                pluginBuffer[idx],
+                pluginBuffer[idx + 1],
+                pluginBuffer[idx + 2],
+                pluginBuffer[idx + 3]
+            );
+        }
+        texture.SetPixels32(pixels);
+        texture.Apply();
+    }
+
+    void OnGUI()
+    {
+        if (!initialized)
+            return;
+
+        int count = GetMarkerCount();
+        Debug.Log(count);
         for (int i = 0; i < count; i++)
         {
-            int id;
-            float x, y;
+            GetMarker(i, out int id, out float x, out float y);
 
-            GetMarker(i, out id, out x, out y);
-
+            // Flip Y because Unity textures are bottom-left origin
             float flippedY = texture.height - y;
 
-            Vector3 screenPos = new Vector3(x, flippedY, 1f);
-            Vector3 worldPos = Camera.main.ScreenToWorldPoint(screenPos);
+            // Map texture coordinates to screen
+            float screenX = x * (Screen.width / (float)texture.width);
+            float screenY = flippedY * (Screen.height / (float)texture.height);
 
-            Instantiate(markerPrefab, worldPos, Quaternion.identity);
+            GUI.Label(new Rect(screenX - 10, screenY - 10, 50, 20), $"ID:{id}");
         }
     }
-    
-
-    // void Update()
-    // {
-    //     if (webcam.width <= 16 || webcam.height <= 16)
-    //         return;
-
-    //     if (!initialized)
-    //     {
-    //         texture = new Texture2D(webcam.width, webcam.height, TextureFormat.RGBA32, false);
-    //         pluginBuffer = new byte[webcam.width * webcam.height * 4]; // RGBA32
-
-    //         handle = GCHandle.Alloc(pluginBuffer, GCHandleType.Pinned);
-
-    //         Renderer renderer = GetComponent<Renderer>();
-    //         if (renderer != null)
-    //             renderer.material.mainTexture = texture;
-
-    //         initialized = true;
-    //     }
-
-    //     // Copy pixels from Color32[] to pluginBuffer
-    //     Color32[] pixels = webcam.GetPixels32();
-    //     for (int i = 0; i < pixels.Length; i++)
-    //     {
-    //         int idx = i * 4;
-    //         pluginBuffer[idx] = pixels[i].r;
-    //         pluginBuffer[idx + 1] = pixels[i].g;
-    //         pluginBuffer[idx + 2] = pixels[i].b;
-    //         pluginBuffer[idx + 3] = pixels[i].a;
-    //     }
-
-    //     // Call plugin
-    //     ProcessImage(handle.AddrOfPinnedObject(), texture.width, texture.height);
-
-    //     // Copy back to Texture2D
-    //     for (int i = 0; i < pixels.Length; i++)
-    //     {
-    //         int idx = i * 4;
-    //         pixels[i] = new Color32(
-    //             pluginBuffer[idx],
-    //             pluginBuffer[idx + 1],
-    //             pluginBuffer[idx + 2],
-    //             pluginBuffer[idx + 3]
-    //         );
-    //     }
-
-    //     texture.SetPixels32(pixels);
-    //     texture.Apply();
-
-    //     int count = GetMarkerCount();
-
-    //     for (int i = 0; i < count; i++)
-    //     {
-    //         int id;
-    //         float x, y;
-
-    //         GetMarker(i, out id, out x, out y);
-
-    //         Debug.Log($"Marker {id} at {x}, {y}");
-    //     }
-    // }
 
     void OnDestroy()
     {
