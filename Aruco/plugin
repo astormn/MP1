@@ -1,0 +1,73 @@
+
+
+#include <opencv2/opencv.hpp>
+#include <opencv2/aruco.hpp>
+#include <vector>
+
+// Global storage for marker info
+std::vector<int> markerIds;
+std::vector<cv::Point2f> markerCenters;
+
+// Macro to export functions for macOS dylib
+#define DLL_EXPORT __attribute__((visibility("default")))
+
+extern "C" {
+
+DLL_EXPORT void ProcessImage(unsigned char* data, int width, int height)
+{
+    if (!data || width <= 0 || height <= 0)
+        return;
+
+    cv::Mat img(height, width, CV_8UC4, data);
+
+    // Convert RGBA → BGR for OpenCV
+    cv::Mat bgr;
+    cv::cvtColor(img, bgr, cv::COLOR_RGBA2BGR);
+
+    // Get ArUco dictionary correctly
+    cv::Ptr<cv::aruco::Dictionary> dictionary =
+        cv::makePtr<cv::aruco::Dictionary>(
+            cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50)
+        );
+
+    std::vector<int> ids;
+    std::vector<std::vector<cv::Point2f>> corners;
+
+    // Detect markers
+    cv::aruco::detectMarkers(bgr, dictionary, corners, ids);
+
+    // Save marker info
+    markerIds = ids;
+    markerCenters.clear();
+    for (auto& corner : corners)
+    {
+        cv::Point2f center(0,0);
+        for (auto& p : corner) center += p;
+        center *= 0.25f; // average to get center
+        markerCenters.push_back(center);
+    }
+
+    // Draw markers for debugging/texture
+    if (!ids.empty())
+        cv::aruco::drawDetectedMarkers(bgr, corners, ids);
+
+    // Convert back to RGBA for Unity
+    cv::cvtColor(bgr, img, cv::COLOR_BGR2RGBA);
+}
+
+DLL_EXPORT int GetMarkerCount()
+{
+    return static_cast<int>(markerIds.size());
+}
+
+DLL_EXPORT void GetMarker(int index, int* id, float* x, float* y)
+{
+    if (!id || !x || !y) return;
+    if (index < 0 || index >= markerIds.size()) return;
+
+    *id = markerIds[index];
+    *x = markerCenters[index].x;
+    *y = markerCenters[index].y;
+}
+
+} 
