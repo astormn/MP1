@@ -1,0 +1,117 @@
+using UnityEngine;
+using System;
+using System.Runtime.InteropServices;
+
+public class CameraFeedSafePersistent : MonoBehaviour
+{
+    [DllImport("opencvplugin")]
+    private static extern void ProcessImage(IntPtr data, int width, int height);
+
+    [DllImport("opencvplugin")]
+    private static extern int GetMarkerCount();
+
+    [DllImport("opencvplugin")]
+    private static extern void GetMarker(int index, out int id, out float x, out float y);
+
+    private WebCamTexture webcam;
+    private Texture2D texture;
+    private byte[] pluginBuffer;
+    private GCHandle handle;
+    private bool initialized = false;
+
+    void Start()
+    {
+        webcam = new WebCamTexture(640, 480);
+        webcam.Play();
+    }
+
+    public GameObject markerPrefab;
+
+    void Update()
+    {
+        int count = GetMarkerCount();
+
+        for (int i = 0; i < count; i++)
+        {
+            int id;
+            float x, y;
+
+            GetMarker(i, out id, out x, out y);
+
+            float flippedY = texture.height - y;
+
+            Vector3 screenPos = new Vector3(x, flippedY, 1f);
+            Vector3 worldPos = Camera.main.ScreenToWorldPoint(screenPos);
+
+            Instantiate(markerPrefab, worldPos, Quaternion.identity);
+        }
+    }
+    
+
+    // void Update()
+    // {
+    //     if (webcam.width <= 16 || webcam.height <= 16)
+    //         return;
+
+    //     if (!initialized)
+    //     {
+    //         texture = new Texture2D(webcam.width, webcam.height, TextureFormat.RGBA32, false);
+    //         pluginBuffer = new byte[webcam.width * webcam.height * 4]; // RGBA32
+
+    //         handle = GCHandle.Alloc(pluginBuffer, GCHandleType.Pinned);
+
+    //         Renderer renderer = GetComponent<Renderer>();
+    //         if (renderer != null)
+    //             renderer.material.mainTexture = texture;
+
+    //         initialized = true;
+    //     }
+
+    //     // Copy pixels from Color32[] to pluginBuffer
+    //     Color32[] pixels = webcam.GetPixels32();
+    //     for (int i = 0; i < pixels.Length; i++)
+    //     {
+    //         int idx = i * 4;
+    //         pluginBuffer[idx] = pixels[i].r;
+    //         pluginBuffer[idx + 1] = pixels[i].g;
+    //         pluginBuffer[idx + 2] = pixels[i].b;
+    //         pluginBuffer[idx + 3] = pixels[i].a;
+    //     }
+
+    //     // Call plugin
+    //     ProcessImage(handle.AddrOfPinnedObject(), texture.width, texture.height);
+
+    //     // Copy back to Texture2D
+    //     for (int i = 0; i < pixels.Length; i++)
+    //     {
+    //         int idx = i * 4;
+    //         pixels[i] = new Color32(
+    //             pluginBuffer[idx],
+    //             pluginBuffer[idx + 1],
+    //             pluginBuffer[idx + 2],
+    //             pluginBuffer[idx + 3]
+    //         );
+    //     }
+
+    //     texture.SetPixels32(pixels);
+    //     texture.Apply();
+
+    //     int count = GetMarkerCount();
+
+    //     for (int i = 0; i < count; i++)
+    //     {
+    //         int id;
+    //         float x, y;
+
+    //         GetMarker(i, out id, out x, out y);
+
+    //         Debug.Log($"Marker {id} at {x}, {y}");
+    //     }
+    // }
+
+    void OnDestroy()
+    {
+        if (handle.IsAllocated)
+            handle.Free();
+    }
+}
