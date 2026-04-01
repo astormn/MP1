@@ -1,0 +1,229 @@
+//quad with camera feed on and a grey cube that moves with the detected aruco
+
+using UnityEngine;
+using System;
+using System.Runtime.InteropServices;
+//using System.Diagnostics;
+//using System.Threading.Tasks.Dataflow;
+//using System.Diagnostics;
+
+public class CameraFeedDebugMarkers : MonoBehaviour
+{
+    [DllImport("opencvplugin")]
+    private static extern int GetPluginVersion();
+
+    [DllImport("opencvplugin")]
+    private static extern void ProcessImage(IntPtr data, int width, int height);
+
+    [DllImport("opencvplugin")]
+    private static extern int GetMarkerCount();
+
+    [DllImport("opencvplugin")]
+    private static extern void GetMarker(int index, out int id, out float x, out float y);
+
+    [DllImport("opencvplugin")]
+    private static extern void GetMarkerPose(int index, float[] rvec, float[] tvec);
+
+    private WebCamTexture webcam;
+    private Texture2D texture;
+    private byte[] pluginBuffer;
+    private GCHandle handle;
+    private bool initialized = false;
+    public  Transform cube; 
+
+    void Start()
+    {
+        webcam = new WebCamTexture(640, 480);
+        webcam.Play();
+        Debug.Log("Plugin version: " + GetPluginVersion());
+
+    }
+//woorking 
+    // void Update()
+    // {
+    //     // Wait until webcam is fully initialized
+    //     if (webcam.width <= 16 || webcam.height <= 16)
+    //         return;
+
+    //     // Initialize only once after webcam is ready
+    //     if (!initialized)
+    //     {
+    //         texture = new Texture2D(webcam.width, webcam.height, TextureFormat.RGBA32, false);
+    //         pluginBuffer = new byte[webcam.width * webcam.height * 4];
+    //         handle = GCHandle.Alloc(pluginBuffer, GCHandleType.Pinned);
+
+    //         // Assign texture to quad
+    //         Renderer renderer = GetComponent<Renderer>();
+    //         if (renderer != null)
+    //             renderer.material.mainTexture = texture;
+
+    //         float aspect = (float)webcam.width / webcam.height;
+    //         renderer.transform.localScale = new Vector3(aspect, 1, 1);   
+
+    //         initialized = true;
+    //     }
+
+    //     // Copy webcam pixels to buffer
+    //     Color32[] pixels = webcam.GetPixels32();
+    //     if (pixels.Length != webcam.width * webcam.height)
+    //         return; // extra safety check
+
+    //     for (int i = 0; i < pixels.Length; i++)
+    //     {
+    //         int idx = i * 4;
+    //         pluginBuffer[idx] = pixels[i].r;
+    //         pluginBuffer[idx + 1] = pixels[i].g;
+    //         pluginBuffer[idx + 2] = pixels[i].b;
+    //         pluginBuffer[idx + 3] = pixels[i].a;
+    //     }
+
+    //     // Call plugin
+    //     ProcessImage(handle.AddrOfPinnedObject(), texture.width, texture.height);
+
+    //     // Copy back to Texture2D
+    //     for (int i = 0; i < pixels.Length; i++)
+    //     {
+    //         int idx = i * 4;
+    //         pixels[i] = new Color32(
+    //             pluginBuffer[idx],
+    //             pluginBuffer[idx + 1],
+    //             pluginBuffer[idx + 2],
+    //             pluginBuffer[idx + 3]
+    //         );
+    //     }
+    //     texture.SetPixels32(pixels);
+    //     texture.Apply();
+    // }
+//
+
+
+    void Update()
+    {
+        // Wait until webcam is ready
+        if (webcam.width <= 16 || webcam.height <= 16)
+            return;
+
+        // Initialize once
+        if (!initialized)
+        {
+            texture = new Texture2D(webcam.width, webcam.height, TextureFormat.RGBA32, false);
+            pluginBuffer = new byte[webcam.width * webcam.height * 4];
+            handle = GCHandle.Alloc(pluginBuffer, GCHandleType.Pinned);
+
+            Renderer renderer = GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.material.mainTexture = texture;
+                //Debug.LogError("no renderer");
+
+            float aspect = (float)webcam.width / webcam.height;
+            renderer.transform.localScale = new Vector3(aspect, 1, 1);  
+            initialized = true;
+        }
+
+        // Copy webcam → buffer
+        Color32[] pixels = webcam.GetPixels32();
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int idx = i * 4;
+            pluginBuffer[idx] = pixels[i].r;
+            pluginBuffer[idx + 1] = pixels[i].g;
+            pluginBuffer[idx + 2] = pixels[i].b;
+            pluginBuffer[idx + 3] = pixels[i].a;
+        }
+
+        // Send to plugin
+        ProcessImage(handle.AddrOfPinnedObject(), texture.width, texture.height);
+        // Copy back from pluginBuffer → pixels
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int idx = i * 4;
+            pixels[i] = new Color32(
+                pluginBuffer[idx],
+                pluginBuffer[idx + 1],
+                pluginBuffer[idx + 2],
+                pluginBuffer[idx + 3]
+            );
+        }
+
+        // Apply to texture
+        texture.SetPixels32(pixels);
+        texture.Apply();
+        if (!initialized) return;
+
+        int count = GetMarkerCount();
+        if (count == 0) return;
+
+        float[] rvec = new float[3];
+        float[] tvec = new float[3];
+
+        GetMarkerPose(0, rvec, tvec);
+
+        // Convert position (OpenCV → Unity)
+        // Vector3 position = new Vector3(
+        //     tvec[0],
+        //     -tvec[1],   // flip Y
+        //     tvec[2]
+        // );
+        Vector3 position = new Vector3(
+            tvec[0],
+            tvec[1],
+            tvec[2]
+        );
+
+        // Convert rotation
+        // Vector3 rotationVector = new Vector3(rvec[0], rvec[1], rvec[2]);
+        // float angle = rotationVector.magnitude * Mathf.Rad2Deg;
+        // Vector3 axis = rotationVector.normalized;
+
+        // Quaternion rotation = Quaternion.AngleAxis(angle, axis);
+
+        Vector3 r = new Vector3(rvec[0], rvec[1], rvec[2]);
+        float angle = r.magnitude;
+        Vector3 axis = r.normalized;
+
+        Quaternion rotation = Quaternion.AngleAxis(angle * Mathf.Rad2Deg, axis);
+
+        // Fix coordinate system
+        rotation = new Quaternion(
+            -rotation.x,
+            -rotation.y,
+            rotation.z,
+            rotation.w
+        );
+
+        cube.localRotation = rotation;
+
+        //cube.localPosition = position;
+        //cube.localPosition = position + new Vector3(0, 0.05f, 0);
+        cube.localPosition = position * 10f + new Vector3(0, 0, 0.5f);
+        cube.localRotation = rotation;
+    }
+
+    void OnGUI()
+    {
+        if (!initialized)
+            return;
+
+        int count = GetMarkerCount();
+        Debug.Log(count);
+        for (int i = 0; i < count; i++)
+        {
+            GetMarker(i, out int id, out float x, out float y);
+
+            // Flip Y because Unity textures are bottom-left origin
+            float flippedY = texture.height - y;
+
+            // Map texture coordinates to screen
+            float screenX = x * (Screen.width / (float)texture.width);
+            float screenY = flippedY * (Screen.height / (float)texture.height);
+
+            GUI.Label(new Rect(screenX - 10, screenY - 10, 50, 20), $"ID:{id}");
+        }
+    }
+
+    void OnDestroy()
+    {
+        if (handle.IsAllocated)
+            handle.Free();
+    }
+}
